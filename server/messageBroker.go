@@ -2,17 +2,17 @@ package main
 
 type ConsolidationMessage struct {
 	channelID int
-	message   Message
+	message   MessageWithDependencies
 }
 
 type DistributorReg struct {
 	channelID      int
-	messageChannel chan Message
+	messageChannel chan MessageWithDependencies
 }
 
 type Registration struct {
-	toBroker   chan Message // Messages going to broker
-	fromBroker chan Message // Messages leaving datacenter
+	toBroker   chan MessageWithDependencies // Messages going to broker
+	fromBroker chan MessageWithDependencies // Messages leaving datacenter
 }
 
 func messageBroker(channelRegister <-chan Registration) {
@@ -31,7 +31,7 @@ func messageBroker(channelRegister <-chan Registration) {
 	}
 }
 
-func consolidator(fromSource <-chan Message, aggregateMsgChannel chan<- ConsolidationMessage, channelID int) {
+func consolidator(fromSource <-chan MessageWithDependencies, aggregateMsgChannel chan<- ConsolidationMessage, channelID int) {
 	for message := range fromSource {
 		aggregateMsgChannel <- ConsolidationMessage{channelID: channelID, message: message}
 	}

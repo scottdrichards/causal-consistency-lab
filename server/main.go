@@ -7,9 +7,12 @@ import (
 	"os"
 )
 
-type Message struct {
-	MessageID    string
-	Body         []byte
+type BasicMessage struct {
+	MessageID string
+	Body      []byte
+}
+type MessageWithDependencies struct {
+	BasicMessage
 	Dependencies []string
 }
 
@@ -55,21 +58,25 @@ func main() {
 
 	for {
 		connection, err := listener.Accept()
+
 		if err != nil {
 			fmt.Println("Error connecting:", err.Error())
 		} else {
+			fmt.Print("Connection Received from ", connection.RemoteAddr().String())
 			reader := bufio.NewReader(connection)
 			endpointType, err := reader.ReadString('\n')
 			if err != nil {
 				fmt.Println("Error reading data", err.Error())
 				connection.Close()
 			}
+			endpointType = endpointType[:len(endpointType)-1]
+			fmt.Println(" of type " + endpointType)
 			if endpointType == "client" {
-				registerClient(connection, registrationChannel)
+				registerClient(connection, reader, registrationChannel)
 			} else if endpointType == "datacenter" {
-				datacenterIncoming(connection, registrationChannel)
+				datacenterIncoming(connection, reader, registrationChannel)
 			} else {
-				fmt.Println("Invalid endpoint type", endpointType, err.Error())
+				fmt.Println("Invalid endpoint type", endpointType, err)
 				connection.Close()
 			}
 		}

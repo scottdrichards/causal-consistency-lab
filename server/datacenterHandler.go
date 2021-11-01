@@ -13,7 +13,7 @@ const maxSecondsWait = 10
 
 // Sends message updates from messageChannel to specific datacenter specified by address and port
 func datacenterOutgoing(address string, port string, registrationChannel chan<- Registration) {
-	sendChannel := make(chan Message, 5)
+	sendChannel := make(chan MessageWithDependencies, 5)
 	registrationChannel <- Registration{
 		toBroker:   nil,
 		fromBroker: sendChannel,
@@ -36,6 +36,9 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 	writer := bufio.NewWriter(conn)
 	writer.WriteString("datacenter\n")
 
+	if writer.Flush() != nil {
+		fmt.Println("Couldn't flush", err)
+	}
 	randomDelay := func(maxDelay uint32) {
 		rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 		waitSeconds := rng.Uint32() % maxSecondsWait
@@ -48,17 +51,22 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 		if err != nil {
 			fmt.Println("Error creating message", message, err)
 		} else {
-			_, err := writer.WriteString(string(jsonMsg))
+			_, err := writer.WriteString(string(jsonMsg) + "\n")
 			if err != nil {
 				fmt.Println("Error creating message", message, err)
 			}
+
+			if writer.Flush() != nil {
+				fmt.Println("Couldn't flush", err)
+			}
+
 		}
 	}
 }
 
 // Receives updates from a specific datacenter and sends the result along messagechannel
-func datacenterIncoming(conn net.Conn, registrationChannel chan<- Registration) {
-	receiveChannel := make(chan Message, 5)
+func datacenterIncoming(conn net.Conn, reader *bufio.Reader, registrationChannel chan<- Registration) {
+	receiveChannel := make(chan MessageWithDependencies, 5)
 	defer close(receiveChannel)
 	registrationChannel <- Registration{
 		toBroker:   receiveChannel,
@@ -66,14 +74,13 @@ func datacenterIncoming(conn net.Conn, registrationChannel chan<- Registration) 
 	}
 
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
 	for {
 		jsonStr, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Trouble receiving message", err)
 			return
 		}
-		var message Message
+		var message MessageWithDependencies
 		if json.Unmarshal([]byte(jsonStr), &message) != nil {
 			fmt.Println("Could not unpack JSON message", err)
 			return

@@ -2,23 +2,21 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 )
 
 // Registers a client newly connected on conn
-func registerClient(conn net.Conn, registrationChannel chan Registration) {
+func registerClient(conn net.Conn, reader *bufio.Reader, registrationChannel chan Registration) {
 
-	// Read the address and port of the client (that the client will listen for updates on)
-	buffer := bufio.NewReader(conn)
-	clientListenAddressPort, err := buffer.ReadString('\n')
+	clientListenAddressPort, err := reader.ReadString('\n')
 	if err != nil {
 		fmt.Println("Client left.")
 		conn.Close()
 		return
 	}
+	clientListenAddressPort = clientListenAddressPort[:len(clientListenAddressPort)-1]
 
 	log.Println("Client connection from " + conn.RemoteAddr().String() + " that listens on " + clientListenAddressPort)
 
@@ -29,48 +27,88 @@ func registerClient(conn net.Conn, registrationChannel chan Registration) {
 		return
 	}
 
-	clientIn := make(chan Message, 4)
-	clientOut := make(chan Message, 4)
+	clientIn := make(chan MessageWithDependencies, 4)
+	clientOut := make(chan MessageWithDependencies, 4)
+	// Used to keep rxer apprised of dependencies of sender
+	clientPrivate := make(chan MessageWithDependencies, 4)
 
 	registrationChannel <- Registration{
 		toBroker:   clientIn,
 		fromBroker: clientOut,
 	}
 
-	go receiveClientUpdate(conn, clientIn)
-	go sendClientUpdate(outGoingConn, clientOut)
+	go receiveClientUpdate(conn, reader, clientIn, clientPrivate)
+	go sendClientUpdate(outGoingConn, clientOut, clientPrivate)
 }
 
-func receiveClientUpdate(conn net.Conn, messageChannel chan<- Message) {
+func receiveClientUpdate(conn net.Conn, reader *bufio.Reader, messageChannel chan<- MessageWithDependencies, clientMessagesSeen <-chan MessageWithDependencies) {
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
+	internalChannel := make(chan BasicMessage, 4)
+
+	// We keep track of dependencies here
+	addDependenciesToMsg := func() {
+		// Bookkeeping to keep track of what the most current dependency list is
+		dependencies := []string{}
+		updateDependencies := func(message MessageWithDependencies) {
+			newDependencies := []string{}
+			// Filter out redundant dependencies
+			for _, oldDep := range dependencies {
+				// Does this message depend on old messages? If so, we can delete the old dependency
+				found := false
+				for _, newDep := range message.Dependencies {
+					if newDep == oldDep {
+						found = true
+						break
+					}
+				}
+				if !found {
+					// The old dependency is still relevant
+					newDependencies = append(newDependencies, oldDep)
+				}
+			}
+			newDependencies = append(newDependencies, message.MessageID)
+			dependencies = newDependencies
+		}
+
+		// This is where we do the magic
+		select {
+		case message := <-internalChannel:
+			messageChannel <- MessageWithDependencies{
+				BasicMessage: message,
+				Dependencies: dependencies,
+			}
+		case messageSeen := <-clientMessagesSeen:
+			updateDependencies(messageSeen)
+		}
+	}
+	go addDependenciesToMsg()
+
+	clientID := conn.RemoteAddr().String()
+	messageCounter := 0
+
 	for {
-		jsonString, err := reader.ReadString('\n')
+		msgBody, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Error receiving message from client", err)
 			return
 		} else {
-			var clientMessage Message
-			if json.Unmarshal([]byte(jsonString), &clientMessage) != nil {
-				fmt.Println("Error parsing message from client:", jsonString, err)
-				return
+			msgBody = msgBody[:len(msgBody)-1]
+			message := BasicMessage{
+				MessageID: clientID + "M" + fmt.Sprint(messageCounter),
+				Body:      []byte(msgBody),
 			}
-
-			var message Message
-			message.Dependencies = clientMessage.Dependencies
-			message.Body = clientMessage.Body
-			message.MessageID = clientMessage.MessageID
-
-			fmt.Println("Received message " + clientMessage.MessageID + " from " + conn.LocalAddr().String() + ":" + string(clientMessage.Body))
-			messageChannel <- message
+			fmt.Println("Received message " + message.MessageID + " from " + clientID + ":" + string(message.Body))
+			internalChannel <- message
+			messageCounter++
 		}
+
 	}
 }
 
 // This function keeps track of client state and sends messages when appropriate
-func sendClientUpdate(conn net.Conn, messageChannel <-chan Message) {
+func sendClientUpdate(conn net.Conn, messageChannel <-chan MessageWithDependencies, clientMessagesSeen chan<- MessageWithDependencies) {
 	seenMsgs := map[string]bool{}
-	var queuedMsgs []Message
+	var queuedMsgs []MessageWithDependencies
 	// I control the connection, so close it when I'm done
 	defer conn.Close()
 	writer := bufio.NewWriter(conn)
@@ -78,6 +116,7 @@ func sendClientUpdate(conn net.Conn, messageChannel <-chan Message) {
 	// Wait for new messages to come in to the messageChannel
 	for newMessage := range messageChannel {
 		_, alreadySent := seenMsgs[newMessage.MessageID]
+		clientMessagesSeen <- newMessage
 		if alreadySent {
 			// The client already has this one
 			break
@@ -89,7 +128,7 @@ func sendClientUpdate(conn net.Conn, messageChannel <-chan Message) {
 		progress := true
 		for progress {
 			progress = false
-			var stillQueued []Message
+			var stillQueued []MessageWithDependencies
 			// Try to send each queued message
 			for _, message := range queuedMsgs {
 				// See if the dependencies are satisfied
@@ -103,25 +142,27 @@ func sendClientUpdate(conn net.Conn, messageChannel <-chan Message) {
 				}
 
 				if satisfiedDeps {
-					// Send to client
-					jsonBytes, err := json.Marshal(newMessage)
+					fmt.Println("Satisfied deps for " + message.MessageID + ", sending...")
+
+					_, err := writer.Write(append(message.Body, '\n'))
 					if err != nil {
 						fmt.Println(err)
 						return
-					} else {
-						_, err := writer.Write(jsonBytes)
-						if err != nil {
-							fmt.Println(err)
-							return
-						}
+					}
+
+					if writer.Flush() != nil {
+						fmt.Println("Couldn't flush", err)
 					}
 					seenMsgs[message.MessageID] = true
 					progress = true
 				} else {
+					fmt.Println("Cannot send " + message.MessageID)
+
 					// We can't process it, so put it back in a queue
 					stillQueued = append(stillQueued, message)
 				}
 			}
+			fmt.Println("There are still " + fmt.Sprint(len(stillQueued)) + " queued messages waiting for dependencies")
 			queuedMsgs = stillQueued
 		}
 	}
