@@ -30,7 +30,7 @@ func main() {
 		listener, err = net.Listen("tcp", host+":"+localPort)
 		// Defer tells main to close the socket when exiting the function
 		if err != nil {
-			fmt.Println("Port taken")
+			fmt.Println("... port taken")
 			continue
 		} else {
 			found = true
@@ -42,7 +42,7 @@ func main() {
 		os.Exit(-1)
 	}
 
-	fmt.Println("Got port", localPort)
+	fmt.Println("Listening on port:", localPort)
 	defer listener.Close()
 
 	registrationChannel := make(chan Registration, 10)

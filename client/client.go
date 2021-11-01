@@ -73,12 +73,15 @@ func main() {
 	// Send messages to DS
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("Ready to go, start chatting")
 		for {
-			fmt.Print("Waiting for input:")
 			text, err := reader.ReadString('\n')
 			if err != nil {
 				fmt.Println("Couldn't write message to datacenter", err)
 			} else {
+				// Remove read delimiter
+				text = text[:len(text)-1]
+				// add send delimiter
 				_, err := dsWriter.WriteString(text + "\n")
 				if err != nil {
 					fmt.Println("Couldn't write message to datacenter", err)

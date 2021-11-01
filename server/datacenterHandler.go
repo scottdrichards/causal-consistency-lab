@@ -13,11 +13,6 @@ const maxSecondsWait = 10
 
 // Sends message updates from messageChannel to specific datacenter specified by address and port
 func datacenterOutgoing(address string, port string, registrationChannel chan<- Registration) {
-	sendChannel := make(chan MessageWithDependencies, 5)
-	registrationChannel <- Registration{
-		toBroker:   nil,
-		fromBroker: sendChannel,
-	}
 
 	var conn net.Conn
 	var err error
@@ -30,6 +25,11 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 		// Exponential backoff
 		time.Sleep(time.Duration(2^backoff) * time.Second)
 		backoff++
+	}
+	sendChannel := make(chan MessageWithDependencies, 5)
+	registrationChannel <- Registration{
+		toBroker:   nil,
+		fromBroker: sendChannel,
 	}
 
 	defer conn.Close()
@@ -46,6 +46,8 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 	}
 
 	for message := range sendChannel {
+		fmt.Println("Received message from another DS", message)
+		fmt.Println("delaying...")
 		randomDelay(maxSecondsWait)
 		jsonMsg, err := json.Marshal(message)
 		if err != nil {
@@ -55,6 +57,7 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 			if err != nil {
 				fmt.Println("Error creating message", message, err)
 			}
+			fmt.Println("Sending message to other datacenter")
 
 			if writer.Flush() != nil {
 				fmt.Println("Couldn't flush", err)
@@ -85,6 +88,8 @@ func datacenterIncoming(conn net.Conn, reader *bufio.Reader, registrationChannel
 			fmt.Println("Could not unpack JSON message", err)
 			return
 		}
+		fmt.Println("Received message from other datacenter", message)
+
 		receiveChannel <- message
 	}
 }

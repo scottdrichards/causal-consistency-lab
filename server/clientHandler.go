@@ -30,26 +30,39 @@ func registerClient(conn net.Conn, reader *bufio.Reader, registrationChannel cha
 	clientIn := make(chan MessageWithDependencies, 4)
 	clientOut := make(chan MessageWithDependencies, 4)
 	// Used to keep rxer apprised of dependencies of sender
-	clientPrivate := make(chan MessageWithDependencies, 4)
+	private2recv := make(chan MessageWithDependencies, 4)
+	private2send := make(chan MessageWithDependencies, 4)
 
+	fmt.Println("Registering client handler")
 	registrationChannel <- Registration{
 		toBroker:   clientIn,
 		fromBroker: clientOut,
 	}
 
-	go receiveClientUpdate(conn, reader, clientIn, clientPrivate)
-	go sendClientUpdate(outGoingConn, clientOut, clientPrivate)
+	go receiveClientUpdate(conn, reader, clientIn, private2recv, private2send)
+	go sendClientUpdate(outGoingConn, clientOut, private2recv, private2send)
 }
 
-func receiveClientUpdate(conn net.Conn, reader *bufio.Reader, messageChannel chan<- MessageWithDependencies, clientMessagesSeen <-chan MessageWithDependencies) {
+func receiveClientUpdate(conn net.Conn, reader *bufio.Reader, messageChannel chan<- MessageWithDependencies, clientPrivateIn <-chan MessageWithDependencies, clientPrivateOut chan<- MessageWithDependencies) {
+	clientID := conn.RemoteAddr().String()[9:]
 	defer conn.Close()
 	internalChannel := make(chan BasicMessage, 4)
 
 	// We keep track of dependencies here
 	addDependenciesToMsg := func() {
-		// Bookkeeping to keep track of what the most current dependency list is
+		// Initialize depedency list
 		dependencies := []string{}
 		updateDependencies := func(message MessageWithDependencies) {
+			strs := func(strlist []string) string {
+				out := ""
+				for i, str := range strlist {
+					out += str
+					if i < len(strlist)-1 {
+						out += ", "
+					}
+				}
+				return out
+			}
 			newDependencies := []string{}
 			// Filter out redundant dependencies
 			for _, oldDep := range dependencies {
@@ -67,23 +80,30 @@ func receiveClientUpdate(conn net.Conn, reader *bufio.Reader, messageChannel cha
 				}
 			}
 			newDependencies = append(newDependencies, message.MessageID)
+			fmt.Println("Updating deps. They were " + strs(dependencies) + ", they are " + strs(newDependencies))
 			dependencies = newDependencies
 		}
 
 		// This is where we do the magic
-		select {
-		case message := <-internalChannel:
-			messageChannel <- MessageWithDependencies{
-				BasicMessage: message,
-				Dependencies: dependencies,
+		for {
+			select {
+			case message := <-internalChannel:
+				fmt.Println("New Message on internal channel, adding deps. ", basicMsgToString(message))
+				fullMessage := MessageWithDependencies{
+					BasicMessage: message,
+					Dependencies: dependencies,
+				}
+				messageChannel <- fullMessage
+				clientPrivateOut <- fullMessage
+				dependencies = append(dependencies, message.MessageID)
+			case messageSeen := <-clientPrivateIn:
+				fmt.Println("New Message seen by "+clientID+" ", msgToString(messageSeen))
+				updateDependencies(messageSeen)
 			}
-		case messageSeen := <-clientMessagesSeen:
-			updateDependencies(messageSeen)
 		}
 	}
 	go addDependenciesToMsg()
 
-	clientID := conn.RemoteAddr().String()
 	messageCounter := 0
 
 	for {
@@ -91,23 +111,29 @@ func receiveClientUpdate(conn net.Conn, reader *bufio.Reader, messageChannel cha
 		if err != nil {
 			fmt.Println("Error receiving message from client", err)
 			return
-		} else {
-			msgBody = msgBody[:len(msgBody)-1]
-			message := BasicMessage{
-				MessageID: clientID + "M" + fmt.Sprint(messageCounter),
-				Body:      []byte(msgBody),
-			}
-			fmt.Println("Received message " + message.MessageID + " from " + clientID + ":" + string(message.Body))
-			internalChannel <- message
-			messageCounter++
 		}
-
+		msgBody = msgBody[:len(msgBody)-1]
+		message := BasicMessage{
+			MessageID: clientID + "M" + fmt.Sprint(messageCounter),
+			Body:      []byte(msgBody),
+		}
+		fmt.Println("Received message:", message)
+		internalChannel <- message
+		messageCounter++
 	}
 }
 
 // This function keeps track of client state and sends messages when appropriate
-func sendClientUpdate(conn net.Conn, messageChannel <-chan MessageWithDependencies, clientMessagesSeen chan<- MessageWithDependencies) {
+func sendClientUpdate(conn net.Conn, messageChannel <-chan MessageWithDependencies, clientPrivateOut chan<- MessageWithDependencies, clientPrivateIn <-chan MessageWithDependencies) {
 	seenMsgs := map[string]bool{}
+
+	// THIS CAN BE A DATA RACE!!!!
+	go func() {
+		for rxedMsg := range clientPrivateIn {
+			seenMsgs[rxedMsg.MessageID] = true
+		}
+	}()
+
 	var queuedMsgs []MessageWithDependencies
 	// I control the connection, so close it when I'm done
 	defer conn.Close()
@@ -115,8 +141,10 @@ func sendClientUpdate(conn net.Conn, messageChannel <-chan MessageWithDependenci
 
 	// Wait for new messages to come in to the messageChannel
 	for newMessage := range messageChannel {
+		fmt.Println("Received message for sending to client ", msgToString(newMessage))
+
 		_, alreadySent := seenMsgs[newMessage.MessageID]
-		clientMessagesSeen <- newMessage
+		clientPrivateOut <- newMessage
 		if alreadySent {
 			// The client already has this one
 			break
@@ -162,7 +190,10 @@ func sendClientUpdate(conn net.Conn, messageChannel <-chan MessageWithDependenci
 					stillQueued = append(stillQueued, message)
 				}
 			}
-			fmt.Println("There are still " + fmt.Sprint(len(stillQueued)) + " queued messages waiting for dependencies")
+			if len(stillQueued) != 0 {
+				fmt.Println("There are still " + fmt.Sprint(len(stillQueued)) + " queued messages waiting for dependencies")
+
+			}
 			queuedMsgs = stillQueued
 		}
 	}
