@@ -4,17 +4,17 @@ import "fmt"
 
 type ConsolidationMessage struct {
 	channelID int
-	message   MessageWithDependencies
+	message   MessageFull
 }
 
 type DistributorReg struct {
 	channelID      int
-	messageChannel chan MessageWithDependencies
+	messageChannel chan MessageFull
 }
 
 type Registration struct {
-	toBroker   chan MessageWithDependencies // Messages going to broker
-	fromBroker chan MessageWithDependencies // Messages leaving datacenter
+	toBroker   chan MessageFull // Messages going to broker
+	fromBroker chan MessageFull // Messages leaving datacenter
 }
 
 func messageBroker(channelRegister <-chan Registration) {
@@ -35,7 +35,7 @@ func messageBroker(channelRegister <-chan Registration) {
 	}
 }
 
-func consolidator(fromSource <-chan MessageWithDependencies, aggregateMsgChannel chan<- ConsolidationMessage, channelID int) {
+func consolidator(fromSource <-chan MessageFull, aggregateMsgChannel chan<- ConsolidationMessage, channelID int) {
 	defer fmt.Println("Consolidator ended")
 	for message := range fromSource {
 		fmt.Println("Fan in message received", message)

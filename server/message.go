@@ -1,7 +1,17 @@
 package main
 
-func msgToString(message MessageWithDependencies) string {
-	out := basicMsgToString(message.BasicMessage)
+func fullToBasic(in chan MessageFull) chan MessageBasic {
+	out := make(chan MessageBasic, 10)
+	go func() {
+		for message := range in {
+			out <- message.MessageBasic
+		}
+	}()
+	return out
+}
+
+func msgToString(message MessageFull) string {
+	out := basicMsgToString(message.MessageBasic)
 	out += " deps["
 	for i, dep := range message.Dependencies {
 		out += dep
@@ -13,7 +23,7 @@ func msgToString(message MessageWithDependencies) string {
 	return out
 }
 
-func basicMsgToString(message BasicMessage) string {
+func basicMsgToString(message MessageBasic) string {
 	out := ""
 	out += message.MessageID + ">> "
 	out += string(message.Body) + "<<"

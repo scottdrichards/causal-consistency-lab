@@ -100,6 +100,7 @@ func main() {
 			fmt.Println("Couldn't read message from datacenter", err)
 			os.Exit(-1)
 		}
+		msg = msg[:len(msg)-1]
 		fmt.Println(msg)
 	}
 }

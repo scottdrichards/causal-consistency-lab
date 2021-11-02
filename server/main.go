@@ -7,12 +7,12 @@ import (
 	"os"
 )
 
-type BasicMessage struct {
+type MessageBasic struct {
 	MessageID string
 	Body      []byte
 }
-type MessageWithDependencies struct {
-	BasicMessage
+type MessageFull struct {
+	MessageBasic
 	Dependencies []string
 }
 

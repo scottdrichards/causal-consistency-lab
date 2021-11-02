@@ -26,7 +26,7 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 		time.Sleep(time.Duration(2^backoff) * time.Second)
 		backoff++
 	}
-	sendChannel := make(chan MessageWithDependencies, 5)
+	sendChannel := make(chan MessageFull, 5)
 	registrationChannel <- Registration{
 		toBroker:   nil,
 		fromBroker: sendChannel,
@@ -69,7 +69,7 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 
 // Receives updates from a specific datacenter and sends the result along messagechannel
 func datacenterIncoming(conn net.Conn, reader *bufio.Reader, registrationChannel chan<- Registration) {
-	receiveChannel := make(chan MessageWithDependencies, 5)
+	receiveChannel := make(chan MessageFull, 5)
 	defer close(receiveChannel)
 	registrationChannel <- Registration{
 		toBroker:   receiveChannel,
@@ -83,7 +83,7 @@ func datacenterIncoming(conn net.Conn, reader *bufio.Reader, registrationChannel
 			fmt.Println("Trouble receiving message", err)
 			return
 		}
-		var message MessageWithDependencies
+		var message MessageFull
 		if json.Unmarshal([]byte(jsonStr), &message) != nil {
 			fmt.Println("Could not unpack JSON message", err)
 			return
