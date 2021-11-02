@@ -63,6 +63,7 @@ func main() {
 		os.Exit(-1)
 	}
 
+	fmt.Println("Waiting for datacenter connection...")
 	dsListen, err := listener.Accept()
 	if err != nil {
 		fmt.Println("Couldn't accept DS connection", err)

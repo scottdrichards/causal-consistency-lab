@@ -72,9 +72,9 @@ func main() {
 			endpointType = endpointType[:len(endpointType)-1]
 			fmt.Println(" of type " + endpointType)
 			if endpointType == "client" {
-				registerClient(connection, reader, registrationChannel)
+				go registerClient(connection, reader, registrationChannel)
 			} else if endpointType == "datacenter" {
-				datacenterIncoming(connection, reader, registrationChannel)
+				go datacenterIncoming(connection, reader, registrationChannel)
 			} else {
 				fmt.Println("Invalid endpoint type", endpointType, err)
 				connection.Close()

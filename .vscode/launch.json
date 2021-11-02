@@ -8,16 +8,18 @@
             "name": "Launch Client",
             "type": "go",
             "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/client",
-            "args": ["1001", "1102","1103"]
+            "mode": "exec",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/client.exe",
+            "args": ["1001", "1102","1103","1104"]
         },        
         {
             "name": "Launch Server",
             "type": "go",
             "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/server",
+            "mode": "exec",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/server.exe",
             "args": ["1001", "1002","1003"]
         }
     ]
