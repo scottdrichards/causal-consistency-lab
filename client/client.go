@@ -7,6 +7,8 @@ import (
 	"os"
 )
 
+var osNewLine string = "\r\n"
+
 func main() {
 
 	// Listen
@@ -18,11 +20,9 @@ func main() {
 	found := false
 	var localPort string = ""
 	for _, localPort = range portOptions {
-		fmt.Println("Trying client on " + host + ":" + localPort)
 		listener, err = net.Listen("tcp", host+":"+localPort)
 		// Defer tells main to close the socket when exiting the function
 		if err != nil {
-			fmt.Println("Port taken")
 			continue
 		} else {
 			found = true
@@ -34,7 +34,7 @@ func main() {
 		os.Exit(-1)
 	}
 
-	fmt.Println("Got port", localPort)
+	fmt.Print("Listening on port ", localPort, "\n\n\n")
 	defer listener.Close()
 
 	datacenterAddress := "localhost"
@@ -77,6 +77,10 @@ func main() {
 		fmt.Println("Ready to go, start chatting")
 		for {
 			text, err := reader.ReadString('\n')
+			// Remove new line characters
+			for i := 0; text[len(text)-1-i] == osNewLine[len(osNewLine)-1-i]; i++ {
+				text = text[:len(text)-1]
+			}
 			if err != nil {
 				fmt.Println("Couldn't write message to datacenter", err)
 			} else {

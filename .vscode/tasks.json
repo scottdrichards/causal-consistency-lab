@@ -3,7 +3,7 @@
     "tasks": [
         {
             "label": "build",
-            "command": "./run.ps1",
+            "command": "./build.ps1",
             "type": "shell",
             "args": [],
             "presentation": {

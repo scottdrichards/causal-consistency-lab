@@ -18,7 +18,7 @@ func registerClient(conn net.Conn, reader *bufio.Reader, registrationChannel cha
 	}
 	clientListenAddressPort = clientListenAddressPort[:len(clientListenAddressPort)-1]
 
-	log.Println("Client connection from " + conn.RemoteAddr().String() + " that listens on " + clientListenAddressPort)
+	log.Println("Client connected that listens on " + clientListenAddressPort)
 
 	outGoingConn, err := net.Dial("tcp", clientListenAddressPort)
 	if err != nil {
@@ -27,63 +27,95 @@ func registerClient(conn net.Conn, reader *bufio.Reader, registrationChannel cha
 		return
 	}
 
-	seenForDeps := make(chan MessageFull, 10)
-	seenForStaging := make(chan MessageFull, 10)
-	seenWatcher := func(channel chan MessageFull) chan MessageFull {
-		out := make(chan MessageFull, 10)
-		go func() {
-			for message := range channel {
-				out <- message
-				seenForDeps <- message
-				seenForStaging <- message
-			}
-		}()
-		return out
-	}
-
-	fmt.Println("Registering client handler")
-	localFromBroker := make(chan MessageFull, 10)
-	localToBroker := make(chan MessageFull, 10)
+	// fmt.Println("Registering client handler")
+	localFromBroker := make(chan MessageFull, 100)
+	localToBroker := make(chan MessageFull, 100)
 
 	registrationChannel <- Registration{
-		toBroker:   seenWatcher(localToBroker),
+		toBroker:   localToBroker,
 		fromBroker: localFromBroker,
 	}
 
-	clientToLocal := make(chan MessageBasic, 10)
+	csSubscribeFn, csUpdateFn := clientSateManager()
+	// clientStateSubscribe := clientStateFanout(clientStateChan)
+	clientToLocal := make(chan MessageBasic, 100)
 	go clientListener(conn, reader, clientToLocal)
-	go addDeps(clientToLocal, seenForDeps, localToBroker)
+	go addDeps(clientToLocal, csSubscribeFn(), csUpdateFn, localToBroker)
 
-	readyMessages := make(chan MessageFull, 10)
-	go clientStaging(localFromBroker, seenForStaging, readyMessages)
-
-	go clientSender(outGoingConn, fullToBasic(seenWatcher(readyMessages)))
+	messagesReady := make(chan MessageBasic, 10)
+	go clientStaging(localFromBroker, csSubscribeFn(), messagesReady)
+	go clientSender(outGoingConn, messagesReady, csUpdateFn)
 }
 
-func addDeps(msgsIn <-chan MessageBasic, seenIn <-chan MessageFull, msgsOut chan<- MessageFull) {
-	depedencies := []string{}
+func clientSateManager() (func() chan ClientState, func(MessageID)) {
+	newIDChan := make(chan MessageID, 10)
+	clientStateChan := make(chan ClientState, 100)
+
+	// This will take new ids and generate a new state from them
+	go func() {
+		clientState := ClientState{}
+		for newID := range newIDChan {
+			found := false
+			for i, oldID := range clientState {
+				if newID.Host == oldID.Host {
+					found = true
+					if newID.Clock > oldID.Clock {
+						clientState[i] = newID
+					} else {
+						fmt.Println("State already newer")
+					}
+					break
+				}
+			}
+			if !found {
+				clientState = append(clientState, newID)
+			}
+			clientStateChan <- clientState
+		}
+	}()
+
+	updateClientState := func(newID MessageID) {
+		newIDChan <- newID
+	}
+
+	addSubscriber := make(chan chan ClientState, 5)
+
+	// This will add subscribers and will also send updates to them when the come
+	go func() {
+		subscribers := []chan ClientState{}
+		for {
+			select {
+			case newSub := <-addSubscriber:
+				subscribers = append(subscribers, newSub)
+			case newState := <-clientStateChan:
+				for _, subscriber := range subscribers {
+					subscriber <- newState
+				}
+			}
+		}
+	}()
+
+	csSubscribeFn := func() chan ClientState {
+		localCSChan := make(chan ClientState, cap(clientStateChan))
+		addSubscriber <- localCSChan
+		return localCSChan
+	}
+	return csSubscribeFn, updateClientState
+}
+
+func addDeps(msgsIn <-chan MessageBasic, clientStateChan <-chan ClientState, updateCS func(MessageID), msgsOut chan<- MessageFull) {
+	clientState := ClientState{}
 	for {
 		select {
 		case message := <-msgsIn:
+			csCopy := append(ClientState{}, clientState...)
 			msgsOut <- MessageFull{
 				MessageBasic: message,
-				Dependencies: depedencies,
+				Dependencies: csCopy,
 			}
-		case message := <-seenIn:
-			updateDependencies := []string{message.MessageID}
-			for _, oldDep := range depedencies {
-				found := false
-				for _, redundantDep := range message.Dependencies {
-					if redundantDep == oldDep {
-						found = true
-						break
-					}
-				}
-				if !found {
-					updateDependencies = append(updateDependencies, oldDep)
-				}
-			}
-			depedencies = updateDependencies
+			updateCS(message.ID)
+		case clientState = <-clientStateChan:
+
 		}
 	}
 }
@@ -100,62 +132,85 @@ func clientListener(conn net.Conn, reader *bufio.Reader, messageChannel chan<- M
 			fmt.Println("Error receiving message from client", err)
 			return
 		}
+		// Remove delimiter
 		msgBody = msgBody[:len(msgBody)-1]
 		message := MessageBasic{
-			MessageID: clientID + "M" + fmt.Sprint(messageCounter),
-			Body:      []byte(msgBody),
+			ID: MessageID{
+				Host:  clientID,
+				Clock: messageCounter,
+			},
+			Body: []byte(msgBody),
 		}
-		fmt.Println("Received message:", basicMsgToString(message))
+		fmt.Println("Received message from client:", message.ToString())
 		messageChannel <- message
 		messageCounter++
 	}
 }
 
-func dependenciesSatisfied(dependencies []string, seen map[string]bool) bool {
+func dependenciesSatisfied(dependencies []MessageID, seen ClientState) bool {
 	for _, dependency := range dependencies {
-		if _, found := seen[dependency]; !found {
+		found := false
+		for _, stateDatum := range seen {
+			if stateDatum.Host == dependency.Host && stateDatum.Clock >= dependency.Clock {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Println("State: ", seen.ToString(), ". Missing: "+dependency.ToString())
 			return false
 		}
 	}
 	return true
 }
 
-func clientStaging(availableMessages <-chan MessageFull, seenMsgChan <-chan MessageFull, readyMessages chan<- MessageFull) {
-	seenMessages := map[string]bool{}
+func clientStaging(availableMessages <-chan MessageFull, clientStateChan <-chan ClientState, messagesReady chan<- MessageBasic) {
+	clientState := ClientState{}
 	queuedMessages := []MessageFull{}
+
+	trySendingMessage := func(message MessageFull) bool {
+		if dependenciesSatisfied(message.Dependencies, clientState) {
+			messagesReady <- message.MessageBasic
+			return true
+		} else {
+			fmt.Println("-----------------------\nDepedencies not satisfied for msg: " + message.ToString())
+		}
+		return false
+	}
+	trySendingMessages := func() {
+		newMessages := []MessageFull{}
+		for _, message := range queuedMessages {
+			if !trySendingMessage(message) {
+				newMessages = append(newMessages, message)
+			}
+		}
+		queuedMessages = newMessages
+	}
 
 	for {
 		select {
 		case message := <-availableMessages:
-			queuedMessages = append(queuedMessages, message)
-			progress := true
-			for progress {
-				progress = false
-				messagesStillRemaining := []MessageFull{}
-				for _, message := range queuedMessages {
-					if dependenciesSatisfied(message.Dependencies, seenMessages) {
-						progress = true
-						readyMessages <- message
-					} else {
-						messagesStillRemaining = append(messagesStillRemaining, message)
-					}
-				}
-				queuedMessages = messagesStillRemaining
+			fmt.Println("New messgae: ", message.ToString())
+			if !trySendingMessage(message) {
+				queuedMessages = append(queuedMessages, message)
 			}
-		case message := <-seenMsgChan:
-			seenMessages[message.MessageID] = true
+		case cs := <-clientStateChan:
+			fmt.Println("New state: ", cs.ToString())
+			clientState = append(ClientState{}, cs...)
+			trySendingMessages()
 		}
 	}
 }
 
 // This function just sends messages
-func clientSender(conn net.Conn, messages <-chan MessageBasic) {
+func clientSender(conn net.Conn, messages <-chan MessageBasic, updateState func(MessageID)) {
 	// I control the connection, so close it when I'm done
 	defer conn.Close()
 	writer := bufio.NewWriter(conn)
 
 	// Wait for new messages to come in to the messageChannel
 	for message := range messages {
+		fmt.Println("Sending message: " + message.ToString())
 		_, err := writer.Write(append(message.Body, '\n'))
 		if err != nil {
 			fmt.Println(err)
@@ -164,6 +219,9 @@ func clientSender(conn net.Conn, messages <-chan MessageBasic) {
 
 		if writer.Flush() != nil {
 			fmt.Println("Couldn't flush", err)
+		} else {
+			// Let everyone know it has been sent
+			updateState(message.ID)
 		}
 	}
 }

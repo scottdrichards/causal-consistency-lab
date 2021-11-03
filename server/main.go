@@ -7,15 +7,6 @@ import (
 	"os"
 )
 
-type MessageBasic struct {
-	MessageID string
-	Body      []byte
-}
-type MessageFull struct {
-	MessageBasic
-	Dependencies []string
-}
-
 func main() {
 
 	// Listen
@@ -26,11 +17,9 @@ func main() {
 	found := false
 	var localPort string = ""
 	for _, localPort = range datacenterPorts {
-		fmt.Println("Trying server on " + host + ":" + localPort)
 		listener, err = net.Listen("tcp", host+":"+localPort)
 		// Defer tells main to close the socket when exiting the function
 		if err != nil {
-			fmt.Println("... port taken")
 			continue
 		} else {
 			found = true
@@ -62,7 +51,7 @@ func main() {
 		if err != nil {
 			fmt.Println("Error connecting:", err.Error())
 		} else {
-			fmt.Print("Connection Received from ", connection.RemoteAddr().String())
+			fmt.Println("Connection Received from ", connection.RemoteAddr().String()[9:])
 			reader := bufio.NewReader(connection)
 			endpointType, err := reader.ReadString('\n')
 			if err != nil {
