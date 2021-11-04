@@ -8,6 +8,9 @@ import (
 )
 
 func main() {
+	fmt.Println("##################")
+	fmt.Println("##### SERVER #####")
+	fmt.Println("##################")
 
 	// Listen
 	host := "localhost"
@@ -16,6 +19,7 @@ func main() {
 	var err error
 	found := false
 	var localPort string = ""
+	// Try ports in the pool (args) until it finds one that is available
 	for _, localPort = range datacenterPorts {
 		listener, err = net.Listen("tcp", host+":"+localPort)
 		// Defer tells main to close the socket when exiting the function
@@ -34,6 +38,8 @@ func main() {
 	fmt.Println("Listening on port:", localPort)
 	defer listener.Close()
 
+	// Channel for client/datacenter handlers to register with the message
+	// broker so that they can send/receive messages to other components
 	registrationChannel := make(chan Registration, 10)
 
 	go messageBroker(registrationChannel)
@@ -46,6 +52,7 @@ func main() {
 	}
 
 	for {
+		// Listen for connections from clients or datacenters (same port)
 		connection, err := listener.Accept()
 
 		if err != nil {
@@ -58,6 +65,9 @@ func main() {
 				fmt.Println("Error reading data", err.Error())
 				connection.Close()
 			}
+
+			// The first message sent is the endpoint type (client/datacenter)
+			// I send the connection to the appropriate handler
 			endpointType = endpointType[:len(endpointType)-1]
 			fmt.Println(" of type " + endpointType)
 			if endpointType == "client" {
@@ -71,5 +81,3 @@ func main() {
 		}
 	}
 }
-
-// func handleUpdates

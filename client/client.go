@@ -11,6 +11,9 @@ var osNewLine string = "\r\n"
 
 func main() {
 
+	fmt.Println("##################")
+	fmt.Println("##### CLIENT #####")
+	fmt.Println("##################")
 	// Listen
 	host := "localhost"
 
@@ -19,9 +22,9 @@ func main() {
 	var err error
 	found := false
 	var localPort string = ""
+	// Find a port that is available to listen on
 	for _, localPort = range portOptions {
 		listener, err = net.Listen("tcp", host+":"+localPort)
-		// Defer tells main to close the socket when exiting the function
 		if err != nil {
 			continue
 		} else {
@@ -37,6 +40,7 @@ func main() {
 	fmt.Print("Listening on port ", localPort, "\n\n\n")
 	defer listener.Close()
 
+	// Connect to datacenter and tell it your address that you listen on
 	datacenterAddress := "localhost"
 	datacenterPort := os.Args[1]
 	datacenterConn, err := net.Dial("tcp", datacenterAddress+":"+datacenterPort)
@@ -71,7 +75,7 @@ func main() {
 	}
 	dsReader := bufio.NewReader(dsListen)
 
-	// Send messages to DS
+	// This is the loop, just wait for input and send it to the datacenter
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Println("Ready to go, start chatting")
@@ -99,6 +103,8 @@ func main() {
 		}
 	}()
 
+	// This is where we deal with incoming messages from the datacenter. The datacenter
+	// takes care of dependencies etc.
 	for {
 		msg, err := dsReader.ReadString('\n')
 		if err != nil {

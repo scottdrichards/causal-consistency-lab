@@ -13,6 +13,7 @@ import (
 const maxSecondsWait = 10
 
 // Sends message updates from messageChannel to specific datacenter specified by address and port
+// This function is called for each datacenter
 func datacenterOutgoing(address string, port string, registrationChannel chan<- Registration) {
 
 	var conn net.Conn
@@ -33,6 +34,7 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 		fromBroker: sendChannel,
 	}
 
+	// Add the prtNum to the seed, otherwise it will have the same seed as other threads!
 	prtNum, _ := strconv.Atoi(port)
 	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(prtNum)))
 	randomDelay := func(maxDelay uint32) {
@@ -44,6 +46,8 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 
 	readyMessages := make(chan MessageFull, 100)
 	go datacenterSendMessage(conn, readyMessages)
+	// Grab messages that are ready to send, asynchronously delay them for random amount of time
+	// then send them off to the other datacenter
 	for message := range sendChannel {
 		fmt.Println("Received message to forward to other datacenter " + message.ToString())
 		go func(message MessageFull) {
@@ -54,6 +58,7 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 	}
 }
 
+// Simple function that just sends the messages
 func datacenterSendMessage(conn net.Conn, readyMessages <-chan MessageFull) {
 
 	defer conn.Close()
@@ -94,6 +99,7 @@ func datacenterIncoming(conn net.Conn, reader *bufio.Reader, registrationChannel
 
 	defer conn.Close()
 	for {
+		// Messages between datacenters are encoded in JSON
 		jsonStr, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Trouble receiving message", err)
