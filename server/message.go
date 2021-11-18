@@ -36,10 +36,14 @@ type MessageFull struct {
 }
 
 func (m MessageFull) ToString() string {
-	depString := "|"
+	depString := "\n\n-----------------------\n"
+	depString += "Message ID: " + m.MessageBasic.ID.ToString() + "\n"
+	depString += "Dependencies:\n"
 	for _, dep := range m.Dependencies {
-		depString += dep.ToString()
-		depString += "|"
+		depString += "\t" + dep.ToString() + "\n"
 	}
-	return depString + m.MessageBasic.ToString()
+	depString += "Body: " + string(m.MessageBasic.Body)
+
+	depString += "\n-----------------------\n\n"
+	return depString
 }
