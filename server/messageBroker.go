@@ -66,7 +66,7 @@ func distributor(messagesForDistribution <-chan ConsolidationMessage, receiveNew
 		case consolidationMsg := <-messagesForDistribution:
 			// Send this to every endpoint
 			for _, endpoint := range distributionList {
-				// Datacenters only send and receive messages with clients (no DC<->DC communication)
+				// Datacenters only pass messages from client->DC, DC->client, client->client (no DC->DC)
 				if !consolidationMsg.isDataCenter || (consolidationMsg.isDataCenter && !endpoint.isDatacenter) {
 					// Make sure we don't loopback and send messages back to the client that sent them
 					if consolidationMsg.channelID != endpoint.channelID {
