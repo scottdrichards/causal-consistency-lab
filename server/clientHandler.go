@@ -57,7 +57,7 @@ func registerClient(conn net.Conn, reader *bufio.Reader, registrationChannel cha
 
 	// Outgoing messages to the client. messagesReady is a channel to communicate
 	// messages between the staging area and the sending process
-	messagesReady := make(chan MessageBasic, 10)
+	messagesReady := make(chan MessageBasic, 100)
 	// This is where messages are staged, awaiting for any dependencies to arrive
 	go clientStaging(localFromBroker, csSubscribeFn(), messagesReady)
 	// Simple function that sends a message over the connection
@@ -71,7 +71,7 @@ func registerClient(conn net.Conn, reader *bufio.Reader, registrationChannel cha
 // whenever the client sees a new message
 func clientSateManager() (func() chan ClientState, func(MessageID)) {
 	// This channel is for updating the client state based on new IDs
-	newIDChan := make(chan MessageID, 10)
+	newIDChan := make(chan MessageID, 100)
 	// This channel is the core channel for distributing state changes
 	// Other "subscription" channels will branch off of this
 	clientStateChan := make(chan ClientState, 100)
@@ -94,7 +94,7 @@ func clientSateManager() (func() chan ClientState, func(MessageID)) {
 					if newID.Clock > oldID.Clock {
 						clientState[i] = newID
 					} else {
-						fmt.Println("State already newer")
+						fmt.Println("State already newer, no need to update state")
 					}
 					break
 				}
@@ -205,7 +205,7 @@ func dependenciesSatisfied(dependencies []MessageID, seen ClientState) bool {
 			}
 		}
 		if !found {
-			fmt.Println("State: ", seen.ToString(), ". Missing: "+dependency.ToString())
+			fmt.Println("Dependency not satisfied!\nState: ", seen.ToString(), ". Missing: "+dependency.ToString())
 			return false
 		}
 	}
@@ -221,7 +221,7 @@ func clientStaging(availableMessages <-chan MessageFull, clientStateChan <-chan 
 			messagesReady <- message.MessageBasic
 			return true
 		} else {
-			fmt.Println("-----------------------\nDepedencies not satisfied for msg: " + message.ToString())
+			fmt.Println("... for message:", message.ToString())
 		}
 		return false
 	}
@@ -238,12 +238,12 @@ func clientStaging(availableMessages <-chan MessageFull, clientStateChan <-chan 
 	for {
 		select {
 		case message := <-availableMessages:
-			fmt.Println("New messgae: ", message.ToString())
+			fmt.Println("Staging-new message: ", message.ToString())
 			if !trySendingMessage(message) {
 				queuedMessages = append(queuedMessages, message)
 			}
 		case cs := <-clientStateChan:
-			fmt.Println("New state: ", cs.ToString())
+			fmt.Println("Staging-New state: ", cs.ToString())
 			clientState = append(ClientState{}, cs...)
 			trySendingMessages()
 		}
@@ -258,7 +258,7 @@ func clientSender(conn net.Conn, messages <-chan MessageBasic, updateState func(
 
 	// Wait for new messages to come in to the messageChannel
 	for message := range messages {
-		fmt.Println("Sending message: " + message.ToString())
+		fmt.Println("Sending message to client: " + message.ToString())
 		_, err := writer.Write(append(message.Body, '\n'))
 		if err != nil {
 			fmt.Println(err)
