@@ -49,10 +49,10 @@ func datacenterOutgoing(address string, port string, registrationChannel chan<- 
 	// Grab messages that are ready to send, asynchronously delay them for random amount of time
 	// then send them off to the other datacenter
 	for message := range sendChannel {
-		fmt.Println("Received message to forward to other datacenter " + message.ToString())
+		fmt.Println("Received message from broker to send to other datacenter: " + message.ToString())
 		go func(message MessageFull) {
 			randomDelay(maxSecondsWait)
-			fmt.Println("Delay over")
+			fmt.Println("... delay over, sending.")
 			readyMessages <- message
 		}(message)
 	}
@@ -69,7 +69,7 @@ func datacenterSendMessage(conn net.Conn, readyMessages <-chan MessageFull) {
 		fmt.Println("Couldn't flush")
 	}
 	for message := range readyMessages {
-		fmt.Println("Sending message: " + message.ToString())
+		fmt.Println("Sending message to other datacenter", message.ToString())
 		jsonMsg, err := json.Marshal(message)
 		if err != nil {
 			fmt.Println("Error creating message", message, err)
@@ -78,8 +78,6 @@ func datacenterSendMessage(conn net.Conn, readyMessages <-chan MessageFull) {
 			if err != nil {
 				fmt.Println("Error creating message", message, err)
 			}
-			fmt.Println("Sending message to other datacenter", message.ToString())
-
 			if writer.Flush() != nil {
 				fmt.Println("Couldn't flush", err)
 			}
@@ -110,7 +108,7 @@ func datacenterIncoming(conn net.Conn, reader *bufio.Reader, registrationChannel
 			fmt.Println("Could not unpack JSON message", err)
 			return
 		}
-		fmt.Println("Received message from other datacenter" + message.ToString())
+		fmt.Println("Received message from other datacenter: " + message.ToString())
 
 		receiveChannel <- message
 	}
